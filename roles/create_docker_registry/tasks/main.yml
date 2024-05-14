@@ -1,0 +1,29 @@
+---
+- name: Check if Docker Registry container exists
+  ansible.builtin.shell:
+    cmd: "docker ps --filter name=^/{{ registry_name }}$ --format '{{ '{{' }}.Names{{ '}}' }}'"
+  register: docker_ps_output
+  changed_when: false
+  ignore_errors: true
+
+- name: Set container exists flag
+  set_fact:
+    container_exists: "{{ docker_ps_output.stdout == registry_name }}"
+
+- debug:
+    msg: "Container exists: {{ container_exists }}"
+
+- name: Create directory for Docker Registry data
+  ansible.builtin.file:
+    path: "{{ registry_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not container_exists  
+  
+- name: Run Docker Registry container
+  ansible.builtin.shell:
+    cmd: "docker run -d --restart=always --name {{ registry_name }} -p {{ registry_port }}:5000 -v {{ registry_data_dir }}:/var/lib/registry registry:{{ registry_version }}"
+    creates: "{{ registry_data_dir }}/data"
+  when: not container_exists 

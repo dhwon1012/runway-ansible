@@ -1,0 +1,185 @@
+---
+- name: Set hostname to inventory hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  tags: common
+
+- name: Update /etc/hosts
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1.*'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+    state: present
+  tags: common
+
+- name: Disable firewalld (CentOS/RHEL)
+  service:
+    name: firewalld
+    state: stopped
+    enabled: no
+  when: ansible_os_family == "RedHat"
+  tags: common
+
+- name: Disable SELinux (CentOS/RHEL)
+  selinux:
+    state: disabled
+  when: ansible_os_family == "RedHat"
+  tags: common
+
+- name: Disable ufw (Ubuntu)
+  service:
+    name: ufw
+    state: stopped
+    enabled: no
+  when: ansible_os_family == "Debian"
+  tags: common
+
+- name: Gather facts from all hosts
+  setup:
+  tags: common
+
+
+- name: Configure /etc/hosts
+  template:
+    src: hosts.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: '0644'
+  tags: common
+
+
+- name: Ensure the modules-load.d directory exists
+  file:
+    path: /etc/modules-load.d
+    state: directory
+    mode: '0755'
+  tags: common  
+
+- name: Add required kernel modules to load at boot
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      br_netfilter
+      ip_vs
+      ip_vs_rr
+      ip_vs_wrr
+      ip_vs_sh
+      overlay
+      xt_REDIRECT
+      xt_owner
+      nf_nat
+      iptable_nat
+      iptable_mangle
+      iptable_filter
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd-modules-load
+  tags: common
+
+- name: Load kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - ip_vs
+    - ip_vs_rr
+    - ip_vs_wrr
+    - ip_vs_sh
+    - overlay
+    - xt_REDIRECT
+    - xt_owner
+    - nf_nat
+    - iptable_nat
+    - iptable_mangle
+    - iptable_filter
+  tags: common
+
+# set timezone
+- name: Set timezone to Asia/Seoul
+  timezone:
+    name: "{{ set_timezone }}"
+  tags: timezone
+
+- name: Check the current timezone
+  command: timedatectl
+  register: timedatectl_output
+  tags: timezone
+
+- name: Show the current timezone
+  debug:
+    msg: "{{ timedatectl_output.stdout_lines }}"
+  tags: timezone
+
+# set selinux off
+- name: Check SELinux status
+  command: getenforce
+  register: selinux_status
+  changed_when: false
+  when: ansible_os_family == "RedHat"
+  tags: common
+
+- name: Disable SELinux
+  command: setenforce 0
+  when: ansible_facts['os_family'] == "RedHat"
+  tags: common
+  ignore_errors: true
+
+- name: Turn off all swap spaces immediately
+  command: swapoff -a
+  changed_when: false
+
+- name: Backup /etc/fstab file
+  copy:
+    src: /etc/fstab
+    dest: /etc/fstab.backup
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Permanently disable swap by commenting swap line in /etc/fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s.*)$'
+    line: '#\1'
+    backrefs: yes
+
+- name: Ensure no swap entries exist in /etc/fstab
+  lineinfile:
+    path: /etc/fstab
+    state: absent
+    regexp: '^\s*UUID=\S+\s+none\s+swap\s+sw\s+0\s+0\s*$'
+  
+
+- name: Ensure no swap label entries exist in /etc/fstab
+  lineinfile:
+    path: /etc/fstab
+    state: absent
+    regexp: '^\s*LABEL=\S+\s+none\s+swap\s+sw\s+0\s+0\s*$'
+  
+
+#- name: Install Chrony - Debian
+#  apt:
+#    name: "chrony"
+#    state: present
+#  when: ansible_facts['os_family'] == "Debian"
+#
+#- name: Install Chrony - CentOS
+#  apt:
+#    name: "chrony"
+#    state: present
+#  when: ansible_facts['os_family'] == "RedHat"
+#
+#- name: Configure Chrony
+#  template:
+#    src: "chrony-{{ ansible_os_family }}.conf.j2"
+#    dest: /etc/chrony/chrony.conf
+#  notify: Restart Chrony service
+#
+#- name: Start Chrony service
+#  service:
+#    name: chronyd
+#    state: started
+#    enabled: true
